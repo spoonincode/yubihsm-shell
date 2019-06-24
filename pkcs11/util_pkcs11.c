@@ -3975,3 +3975,26 @@ CK_RV validate_derive_key_attribute(CK_ATTRIBUTE_TYPE type, void *value) {
 
   return CKR_OK;
 }
+
+#ifdef USE_YKYH
+int parse_yk_password(char *line, char **name, char **pw) {
+
+  int len = strlen(line);
+
+  *name = line;
+  for (int i = 0; i < len; i++) {
+    if (line[i] == ':') {
+      if (len - i - 1 != YKYH_PW_LEN) {
+        return -1;
+      }
+
+      line[i] = '\0';
+      *pw = line + i + 1;
+
+      return 0;
+    }
+  }
+
+  return -1;
+}
+#endif

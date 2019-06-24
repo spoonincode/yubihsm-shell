@@ -31,6 +31,10 @@
 #include <cmdline.h>
 #include <yubihsm.h>
 
+#ifdef USE_YKYH
+#include <ykyh.h>
+#endif
+
 #include <openssl/rsa.h>
 
 #include "debug_p11.h"
@@ -301,6 +305,16 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs) {
 
   DBG_INFO("Found %zu usable connector(s)", n_connectors);
 
+#ifdef USE_YKYH
+  ykyh_rc ykyhrc;
+  ykyhrc =
+    ykyh_init(&g_ctx.ykyh_state, 1); // TODO(adma): do something about verbosity
+  if (ykyhrc != YKYHR_SUCCESS) {
+    DBG_ERR("Failed to initialize libykyh");
+    goto c_i_failure;
+  }
+#endif
+
   g_yh_initialized = true;
 
   DOUT;
@@ -356,6 +370,11 @@ CK_DEFINE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved) {
   g_yh_initialized = false;
 
   yh_exit();
+
+#ifdef USE_YKYH
+  ykyh_done(g_ctx.ykyh_state); // TODO(adma): more consistent naming
+  g_ctx.ykyh_state = NULL;
+#endif
 
   DOUT;
 
@@ -1122,18 +1141,90 @@ CK_DEFINE_FUNCTION(CK_RV, C_Login)
   }
 
   yh_rc yrc;
-  yrc =
-    yh_create_session_derived(session->slot->connector, key_id, pPin, ulPinLen,
-                              true, &session->slot->device_session);
-  if (yrc != YHR_SUCCESS) {
-    DBG_ERR("Failed to create session: %s", yh_strerror(yrc));
-    if (yrc == YHR_CRYPTOGRAM_MISMATCH) {
-      rv = CKR_PIN_INCORRECT;
-    } else {
+#ifdef USE_YKYH
+  uint8_t *yh_context;
+  if (strncmp("yk:", (char *) pPin, 3) == 0) {
+    ykyh_rc ykyhrc;
+    uint8_t card_cryptogram[YH_CONTEXT_LEN / 2];
+    uint8_t key_s_enc[YH_KEY_LEN];
+    uint8_t key_s_mac[YH_KEY_LEN];
+    uint8_t key_s_rmac[YH_KEY_LEN];
+    size_t key_s_enc_len = sizeof(key_s_enc);
+    size_t key_s_mac_len = sizeof(key_s_mac);
+    size_t key_s_rmac_len = sizeof(key_s_rmac);
+    uint8_t retries;
+
+    ykyhrc = ykyh_connect(g_ctx.ykyh_state, NULL);
+    if (ykyhrc != YKYHR_SUCCESS) {
+      DBG_ERR("Failed to connect to the YubiKey: %s", ykyh_strerror(ykyhrc));
       rv = CKR_FUNCTION_FAILED;
+      goto c_l_out;
     }
-    goto c_l_out;
+
+    yrc =
+      yh_begin_create_session_ext(session->slot->connector, key_id, &yh_context,
+                                  card_cryptogram, sizeof(card_cryptogram),
+                                  &session->slot->device_session);
+    if (yrc != YHR_SUCCESS) {
+      DBG_ERR("Failed to create session: %s", yh_strerror(yrc));
+      rv = CKR_FUNCTION_FAILED;
+      goto c_l_out;
+    }
+
+    char *name;
+    char *pw;
+    if (parse_yk_password((char *) (pPin + 3), &name, &pw) == -1) {
+      DBG_ERR("Failed to decode password, format must be "
+              "yk:NAME[%d-%d]:PASSWORD[%d]",
+              YKYH_MIN_NAME_LEN, YKYH_MAX_NAME_LEN, YKYH_PW_LEN);
+      rv = CKR_FUNCTION_FAILED;
+      goto c_l_out;
+    }
+
+    ykyhrc =
+      ykyh_calculate(g_ctx.ykyh_state, name, yh_context, YH_CONTEXT_LEN, pw,
+                     key_s_enc, sizeof(key_s_enc), key_s_mac, sizeof(key_s_mac),
+                     key_s_rmac, sizeof(key_s_rmac), &retries);
+    if (ykyhrc != YKYHR_SUCCESS) {
+      if (ykyhrc == YKYHR_WRONG_PW) {
+        DBG_INFO("Wrong credential password, %d attempts remaining", retries);
+        rv = CKR_PIN_INCORRECT;
+      } else {
+        DBG_ERR("Failed to get session keys from the YubiKey: %s",
+                ykyh_strerror(ykyhrc));
+        rv = CKR_FUNCTION_FAILED;
+      }
+      goto c_l_out;
+    }
+
+    yrc =
+      yh_finish_create_session_ext(session->slot->connector,
+                                   session->slot->device_session, key_s_enc,
+                                   key_s_enc_len, key_s_mac, key_s_mac_len,
+                                   key_s_rmac, key_s_rmac_len, card_cryptogram,
+                                   sizeof(card_cryptogram));
+    if (yrc != YHR_SUCCESS) {
+      DBG_ERR("Failed to create session: %s\n", yh_strerror(yrc));
+      rv = CKR_FUNCTION_FAILED;
+      goto c_l_out;
+    }
+  } else {
+#endif
+    yrc =
+      yh_create_session_derived(session->slot->connector, key_id, pPin,
+                                ulPinLen, true, &session->slot->device_session);
+    if (yrc != YHR_SUCCESS) {
+      DBG_ERR("Failed to create session: %s", yh_strerror(yrc));
+      if (yrc == YHR_CRYPTOGRAM_MISMATCH) {
+        rv = CKR_PIN_INCORRECT;
+      } else {
+        rv = CKR_FUNCTION_FAILED;
+      }
+      goto c_l_out;
+    }
+#ifdef USE_YKYH
   }
+#endif
 
   yrc = yh_authenticate_session(session->slot->device_session);
   if (yrc != YHR_SUCCESS) {

@@ -150,4 +150,8 @@ CK_RV populate_template(int type, void *object, CK_ATTRIBUTE_PTR pTemplate,
 
 CK_RV validate_derive_key_attribute(CK_ATTRIBUTE_TYPE type, void *value);
 
+#ifdef USE_YKYH
+int parse_yk_password(char *line, char **name, char **pw);
+#endif
+
 #endif

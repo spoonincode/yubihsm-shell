@@ -30,6 +30,7 @@ set(
 
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/../lib
+  ${CMAKE_CURRENT_SOURCE_DIR}/../ykyh
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${LIBCRYPTO_INCLUDEDIR}
   )
@@ -70,11 +71,21 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   set_target_properties(yubihsm_pkcs11 PROPERTIES LINK_FLAGS "-liconv")
 endif()
 
-target_link_libraries(
-  yubihsm_pkcs11
-  yubihsm
-  ${LIBCRYPTO_LDFLAGS}
-  )
+if (ENABLE_EXPERIMENTAL_YKYH)
+  add_definitions(-DUSE_YKYH="1")
+  target_link_libraries (
+    yubihsm_pkcs11
+    yubihsm
+    ${LIBCRYPTO_LDFLAGS}
+    ykyh
+    )
+else ()
+  target_link_libraries(
+    yubihsm_pkcs11
+    yubihsm
+    ${LIBCRYPTO_LDFLAGS}
+    )
+endif ()
 
 install(
   TARGETS yubihsm_pkcs11

@@ -22,6 +22,10 @@
 #include <openssl/evp.h>
 #include <sys/time.h>
 
+#ifdef USE_YKYH
+#include <ykyh.h>
+#endif
+
 #define YUBIHSM_PKCS11_OP_BUFSIZE 4096
 #define MAX_ECDH_SESSION_KEYS 255
 #define ECDH_KEY_BUF_SIZE 128
@@ -145,6 +149,10 @@ typedef struct {
   CK_LOCKMUTEX lock_mutex;
   CK_UNLOCKMUTEX unlock_mutex;
   void *mutex;
+#ifdef USE_YKYH
+  ykyh_state
+    *ykyh_state; // TODO(adma): should this be a single global instance?
+#endif
 } yubihsm_pkcs11_context;
 
 typedef struct {
