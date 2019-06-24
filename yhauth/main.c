@@ -174,6 +174,73 @@ static bool delete_credential(ykyh_state *state, char *name) {
   return true;
 }
 
+static bool derive_keys(const char *dpw, size_t dpw_len, uint8_t *key_enc,
+                        size_t *key_enc_len, uint8_t *key_mac,
+                        size_t *key_mac_len) {
+  uint8_t key[YKYH_KEY_LEN * 2];
+
+  if (dpw == NULL || key_enc == NULL || key_enc_len == NULL ||
+      *key_enc_len < YKYH_KEY_LEN || key_mac == NULL || key_mac_len == NULL ||
+      *key_mac_len < YKYH_KEY_LEN) {
+    return false;
+  }
+
+  int ret =
+    PKCS5_PBKDF2_HMAC((const char *) dpw, dpw_len,
+                      (uint8_t *) YKYH_DEFAULT_SALT, strlen(YKYH_DEFAULT_SALT),
+                      YKYH_DEFAULT_ITERS, EVP_sha256(), sizeof(key), key);
+
+  if (ret != 1) {
+    return false;
+  }
+
+  memcpy(key_enc, key, YKYH_KEY_LEN);
+  *key_enc_len = YKYH_KEY_LEN;
+  memcpy(key_mac, key + YKYH_KEY_LEN, YKYH_KEY_LEN);
+  *key_mac_len = YKYH_KEY_LEN;
+
+  return true;
+}
+
+static void print_hex_key(FILE *file, const uint8_t *key, size_t key_len) {
+  unsigned int i;
+  for (i = 0; i < key_len; i++) {
+    fprintf(file, "%02x", key[i]);
+  }
+}
+
+static bool derive_credential(char *derivation_password) {
+  char dpw_parsed[256] = {0};
+  size_t dpw_parsed_len = sizeof(dpw_parsed);
+  uint8_t key_enc_parsed[YKYH_KEY_LEN];
+  size_t key_enc_parsed_len = sizeof(key_enc_parsed);
+  uint8_t key_mac_parsed[YKYH_KEY_LEN];
+  size_t key_mac_parsed_len = sizeof(key_mac_parsed);
+
+  if (strlen(derivation_password) == 0) {
+    if (parse_pw("Derivation password", derivation_password, dpw_parsed,
+                 &dpw_parsed_len) == false) {
+      return false;
+    }
+  }
+
+  if (derive_keys(dpw_parsed, dpw_parsed_len, key_enc_parsed,
+                  &key_enc_parsed_len, key_mac_parsed,
+                  &key_mac_parsed_len) == false) {
+    return false;
+  }
+
+  fprintf(stdout, "ENC key: ");
+  print_hex_key(stdout, key_enc_parsed, key_enc_parsed_len);
+  fprintf(stdout, "\n");
+
+  fprintf(stdout, "MAC key: ");
+  print_hex_key(stdout, key_mac_parsed, key_mac_parsed_len);
+  fprintf(stdout, "\n");
+
+  return true;
+}
+
 static bool list_credentials(ykyh_state *state) {
   ykyh_rc ykyhrc;
   ykyh_list_entry list[32];
@@ -241,20 +308,12 @@ static bool put_credential(ykyh_state *state, char *name,
       return false;
     }
   } else {
-    uint8_t key[YKYH_KEY_LEN * 2];
-    int ret = PKCS5_PBKDF2_HMAC((const char *) dpw_parsed, dpw_parsed_len,
-                                (uint8_t *) YKYH_DEFAULT_SALT,
-                                strlen(YKYH_DEFAULT_SALT), YKYH_DEFAULT_ITERS,
-                                EVP_sha256(), sizeof(key), key);
-
-    if (ret != 1) {
+    if (derive_keys(dpw_parsed, dpw_parsed_len, key_enc_parsed,
+                    &key_enc_parsed_len, key_mac_parsed,
+                    &key_mac_parsed_len) == false) {
+      fprintf(stderr, "Unable to derive keys\n");
       return false;
     }
-
-    memcpy(key_enc_parsed, key, YKYH_KEY_LEN);
-    key_enc_parsed_len = YKYH_KEY_LEN;
-    memcpy(key_mac_parsed, key + YKYH_KEY_LEN, YKYH_KEY_LEN);
-    key_mac_parsed_len = YKYH_KEY_LEN;
   }
 
   if (parse_pw("Password", password, pw_parsed, &pw_parsed_len) == false) {
@@ -319,22 +378,28 @@ int main(int argc, char *argv[]) {
     goto main_exit;
   }
 
-  ykyhrc = ykyh_init(&state, args_info.verbose_arg);
-  if (ykyhrc != YKYHR_SUCCESS) {
-    fprintf(stderr, "Failed to initialize libykyh\n");
-    goto main_exit;
-  }
+  if (args_info.action_arg != action_arg_derive) {
+    ykyhrc = ykyh_init(&state, args_info.verbose_arg);
+    if (ykyhrc != YKYHR_SUCCESS) {
+      fprintf(stderr, "Failed to initialize libykyh\n");
+      goto main_exit;
+    }
 
-  ykyhrc = ykyh_connect(state, args_info.reader_arg);
-  if (ykyhrc != YKYHR_SUCCESS) {
-    fprintf(stderr, "Unable to connect: %s\n", ykyh_strerror(ykyhrc));
-    goto main_exit;
+    ykyhrc = ykyh_connect(state, args_info.reader_arg);
+    if (ykyhrc != YKYHR_SUCCESS) {
+      fprintf(stderr, "Unable to connect: %s\n", ykyh_strerror(ykyhrc));
+      goto main_exit;
+    }
   }
 
   bool result = false;
   switch (args_info.action_arg) {
     case action_arg_delete:
       result = delete_credential(state, args_info.name_arg);
+      break;
+
+    case action_arg_derive:
+      result = derive_credential(args_info.derivation_password_arg);
       break;
 
     case action_arg_list:
