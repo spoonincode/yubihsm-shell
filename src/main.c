@@ -1777,7 +1777,7 @@ int main(int argc, char *argv[]) {
 
 #ifdef USE_YKYH
   ykyh_rc ykyhrc;
-  ykyhrc = ykyh_init(&ctx.state, 1); // TODO(adma): do something about verbosity
+  ykyhrc = ykyh_init(&ctx.state); // TODO(adma): do something about verbosity
   if (ykyhrc != YKYHR_SUCCESS) {
     fprintf(stderr, "Failed to initialize libykyh\n");
     rc = EXIT_FAILURE;

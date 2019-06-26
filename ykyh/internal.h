@@ -18,6 +18,7 @@
 #define YKYH_INTERNAL_H
 
 #include <stdbool.h>
+#include <stdio.h>
 
 //#if BACKEND_PCSC
 //#if defined HAVE_PCSC_WINSCARD_H
@@ -34,7 +35,8 @@
 struct ykyh_state {
   SCARDCONTEXT context;
   SCARDHANDLE card;
-  int verbose;
+  int verbosity;
+  FILE *debug_file;
 };
 
 union u_APDU {

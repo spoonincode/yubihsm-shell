@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 
 //#include <ykyh-version.h>
 
@@ -71,6 +72,13 @@ extern "C" {
 #define YKYH_DEFAULT_SALT "Yubico"
 #define YKYH_DEFAULT_ITERS 10000
 
+// Debug levels
+#define YKYH_VERB_QUIET 0x00
+#define YKYH_VERB_INFO 0x01
+#define YKYH_VERB_WARN 0x02
+#define YKYH_VERB_ERR 0x04
+#define YKYH_VERB_ALL 0xff
+
 typedef struct ykyh_state ykyh_state;
 
 typedef enum {
@@ -92,11 +100,15 @@ typedef struct {
 const char *ykyh_strerror(ykyh_rc err);
 const char *ykyh_strerror_name(ykyh_rc err);
 
-ykyh_rc ykyh_init(ykyh_state **state, int verbose);
+ykyh_rc ykyh_init(ykyh_state **state);
 ykyh_rc ykyh_done(ykyh_state *state);
 ykyh_rc ykyh_connect(ykyh_state *state, const char *wanted);
 ykyh_rc ykyh_list_readers(ykyh_state *state, char *readers, size_t *len);
 ykyh_rc ykyh_disconnect(ykyh_state *state);
+
+ykyh_rc ykyh_set_verbosity(ykyh_state *state, uint8_t verbosity);
+ykyh_rc ykyh_get_verbosity(ykyh_state *state, uint8_t *verbosity);
+void ykyh_set_debug_output(ykyh_state *state, FILE *output);
 
 ykyh_rc ykyh_get_version(ykyh_state *state, char *version, size_t len);
 

@@ -379,9 +379,36 @@ int main(int argc, char *argv[]) {
   }
 
   if (args_info.action_arg != action_arg_derive) {
-    ykyhrc = ykyh_init(&state, args_info.verbose_arg);
+    ykyhrc = ykyh_init(&state);
     if (ykyhrc != YKYHR_SUCCESS) {
       fprintf(stderr, "Failed to initialize libykyh\n");
+      goto main_exit;
+    }
+
+    uint8_t verbosity = YKYH_VERB_QUIET;
+
+    switch (args_info.verbose_arg + args_info.verbose_given) {
+      case 0:
+        break;
+
+      case 3:
+        verbosity |= YKYH_VERB_INFO;
+        /* FALL-THROUGH */
+
+      case 2:
+        verbosity |= YKYH_VERB_WARN;
+        /* FALL-THROUGH */
+
+      case 1:
+        verbosity |= YKYH_VERB_ERR;
+        break;
+
+      default:
+        verbosity = YKYH_VERB_ALL;
+    }
+    ykyhrc = ykyh_set_verbosity(state, verbosity);
+    if (ykyhrc != YKYHR_SUCCESS) {
+      fprintf(stderr, "Unable to set verbosity\n");
       goto main_exit;
     }
 

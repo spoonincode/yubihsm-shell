@@ -308,11 +308,16 @@ CK_DEFINE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs) {
 #ifdef USE_YKYH
   ykyh_rc ykyhrc;
   ykyhrc =
-    ykyh_init(&g_ctx.ykyh_state, 1); // TODO(adma): do something about verbosity
+    ykyh_init(&g_ctx.ykyh_state); // TODO(adma): do something about verbosity
   if (ykyhrc != YKYHR_SUCCESS) {
     DBG_ERR("Failed to initialize libykyh");
     goto c_i_failure;
   }
+
+  ykyh_set_verbosity(g_ctx.ykyh_state,
+                     YKYH_VERB_ALL); // TODO(adma): incorporate support for
+  ykyh_set_debug_output(g_ctx.ykyh_state,
+                        stderr); // these in the config file and yh_dbg_init()
 #endif
 
   g_yh_initialized = true;

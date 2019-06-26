@@ -22,22 +22,24 @@
 #include "internal.h"
 #include "ykyh.h"
 
+#include "debug_ykyh.h"
+
 static ykyh_rc send_data(ykyh_state *state, APDU *apdu, unsigned char *data,
                          unsigned long *recv_len, int *sw);
 
-static void dump_hex(const unsigned char *buf, unsigned int len) {
+static void dump_hex(FILE *debug_file, const unsigned char *buf,
+                     unsigned int len) {
   unsigned int i;
+
   for (i = 0; i < len; i++) {
-    fprintf(stderr, "%02x ", buf[i]);
+    fprintf(debug_file, "%02x ", buf[i]);
   }
 }
 
-ykyh_rc ykyh_init(ykyh_state **state, int verbose) {
+ykyh_rc ykyh_init(ykyh_state **state) {
   if (state == NULL) {
-    if (verbose) {
-      fprintf(stderr, "Unable to initialize: %s",
-              ykyh_strerror(YKYHR_INVALID_PARAMS));
-    }
+    fprintf(stderr, "Unable to initialize: %s",
+            ykyh_strerror(YKYHR_INVALID_PARAMS));
 
     return YKYHR_INVALID_PARAMS;
   }
@@ -45,16 +47,15 @@ ykyh_rc ykyh_init(ykyh_state **state, int verbose) {
   ykyh_state *s = malloc(sizeof(ykyh_state));
 
   if (s == NULL) {
-    if (verbose) {
-      fprintf(stderr, "Unable to initialize: %s",
-              ykyh_strerror(YKYHR_MEMORY_ERROR));
-    }
+    fprintf(stderr, "Unable to initialize: %s",
+            ykyh_strerror(YKYHR_MEMORY_ERROR));
 
     return YKYHR_MEMORY_ERROR;
   }
 
   memset(s, 0, sizeof(ykyh_state));
-  s->verbose = verbose;
+  s->verbosity = YKYH_VERB_QUIET;
+  s->debug_file = stderr;
   s->context = SCARD_E_INVALID_HANDLE;
   *state = s;
 
@@ -102,37 +103,41 @@ ykyh_rc ykyh_connect(ykyh_state *state, const char *wanted) {
 
   ykyh_rc ret = ykyh_list_readers(state, reader_buf, &num_readers);
   if (ret != YKYHR_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "Unable to list_readers: %s", ykyh_strerror(ret));
-    }
-
+    DBG_ERR("Unable to list_readers: %s", ykyh_strerror(ret));
     return ret;
   }
 
   for (reader_ptr = reader_buf; *reader_ptr != '\0';
        reader_ptr += strlen(reader_ptr) + 1) {
     if (wanted) {
-      if (!strncasecmp(reader_ptr, wanted, strlen(wanted))) {
-        if (state->verbose) {
-          fprintf(stderr, "skipping reader '%s' since it doesn't match '%s'\n",
-                  reader_ptr, wanted);
+      char *ptr = reader_ptr;
+      bool found = false;
+      do {
+        if (strlen(ptr) < strlen(wanted)) {
+          break;
         }
+        if (strncasecmp(ptr, wanted, strlen(wanted)) == 0) {
+          found = true;
+          break;
+        }
+      } while (*ptr++);
+
+      if (found == false) {
+        DBG_INFO("Skipping over reader '%s' since it does not match '%s'",
+                 reader_ptr, wanted);
+
         continue;
       }
     }
 
-    if (state->verbose) {
-      fprintf(stderr, "trying to connect to reader '%s'\n", reader_ptr);
-    }
+    DBG_INFO("trying to connect to reader '%s'", reader_ptr);
 
     rc =
       SCardConnect(state->context, reader_ptr, SCARD_SHARE_SHARED,
                    SCARD_PROTOCOL_T1, &state->card, (LPDWORD) &active_protocol);
 
     if (rc != SCARD_S_SUCCESS) {
-      if (state->verbose) {
-        fprintf(stderr, "SCardConnect failed, rc=%08lx\n", rc);
-      }
+      DBG_ERR("SCardConnect failed, rc=%08lx", rc);
       continue;
     }
 
@@ -150,25 +155,17 @@ ykyh_rc ykyh_connect(ykyh_state *state, const char *wanted) {
 
     if ((res = send_data(state, &apdu, data, &recv_len, &sw)) !=
         YKYHR_SUCCESS) {
-      if (state->verbose) {
-        fprintf(stderr, "Failed communicating with card: '%s'\n",
-                ykyh_strerror(res));
-      }
-
+      DBG_ERR("Failed communicating with card: '%s'", ykyh_strerror(res));
       continue;
     } else if (sw == SW_SUCCESS) {
       return YKYHR_SUCCESS;
     } else {
-      if (state->verbose) {
-        fprintf(stderr, "Failed selecting application: %04x\n", sw);
-      }
+      DBG_ERR("Failed selecting application: %04x", sw);
     }
   }
 
   if (*reader_ptr == '\0') {
-    if (state->verbose) {
-      fprintf(stderr, "error: no usable reader found\n");
-    }
+    DBG_ERR("No usable reader found");
     SCardReleaseContext(state->context);
     state->context = SCARD_E_INVALID_HANDLE;
     return YKYHR_PCSC_ERROR;
@@ -188,18 +185,14 @@ ykyh_rc ykyh_list_readers(ykyh_state *state, char *readers, size_t *len) {
   if (SCardIsValidContext(state->context) != SCARD_S_SUCCESS) {
     rc = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &state->context);
     if (rc != SCARD_S_SUCCESS) {
-      if (state->verbose) {
-        fprintf(stderr, "error: SCardEstablishContext failed, rc=%08lx\n", rc);
-      }
+      DBG_ERR("SCardEstablishContext failed, rc=%08lx", rc);
       return YKYHR_PCSC_ERROR;
     }
   }
 
   rc = SCardListReaders(state->context, NULL, NULL, (LPDWORD) &num_readers);
   if (rc != SCARD_S_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "error: SCardListReaders failed, rc=%08lx\n", rc);
-    }
+    DBG_ERR("SCardListReaders failed, rc=%08lx", rc);
     SCardReleaseContext(state->context);
     state->context = SCARD_E_INVALID_HANDLE;
     return YKYHR_PCSC_ERROR;
@@ -211,9 +204,7 @@ ykyh_rc ykyh_list_readers(ykyh_state *state, char *readers, size_t *len) {
 
   rc = SCardListReaders(state->context, NULL, readers, (LPDWORD) &num_readers);
   if (rc != SCARD_S_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "error: SCardListReaders failed, rc=%08lx\n", rc);
-    }
+    DBG_ERR("SCardListReaders failed, rc=%08lx", rc);
     SCardReleaseContext(state->context);
     state->context = SCARD_E_INVALID_HANDLE;
     return YKYHR_PCSC_ERROR;
@@ -224,6 +215,33 @@ ykyh_rc ykyh_list_readers(ykyh_state *state, char *readers, size_t *len) {
   return YKYHR_SUCCESS;
 }
 
+ykyh_rc ykyh_set_verbosity(ykyh_state *state, uint8_t verbosity) {
+
+  if (state != NULL) {
+    state->verbosity = verbosity;
+  }
+
+  return YKYHR_SUCCESS;
+}
+
+ykyh_rc ykyh_get_verbosity(ykyh_state *state, uint8_t *verbosity) {
+
+  if (verbosity == NULL) {
+    return YKYHR_INVALID_PARAMS;
+  }
+
+  *verbosity = state->verbosity;
+
+  return YKYHR_SUCCESS;
+}
+
+void ykyh_set_debug_output(ykyh_state *state, FILE *output) {
+
+  if (state != NULL) {
+    state->debug_file = output;
+  }
+}
+
 static ykyh_rc send_data(ykyh_state *state, APDU *apdu, unsigned char *data,
                          unsigned long *recv_len, int *sw) {
   long rc;
@@ -231,24 +249,22 @@ static ykyh_rc send_data(ykyh_state *state, APDU *apdu, unsigned char *data,
 
   *sw = 0;
 
-  if (state->verbose > 1) {
-    fprintf(stderr, "> ");
-    dump_hex(apdu->raw, send_len);
-    fprintf(stderr, "\n");
+  if ((state->verbosity & YKYH_VERB_INFO) != 0) {
+    fprintf(state->debug_file, "> ");
+    dump_hex(state->debug_file, apdu->raw, send_len);
+    fprintf(state->debug_file, "\n");
   }
   rc = SCardTransmit(state->card, SCARD_PCI_T1, apdu->raw, send_len, NULL, data,
                      (LPDWORD) recv_len);
   if (rc != SCARD_S_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "error: SCardTransmit failed, rc=%08lx\n", rc);
-    }
+    DBG_ERR("SCardTransmit failed, rc=%08lx", rc);
     return YKYHR_PCSC_ERROR;
   }
 
-  if (state->verbose > 1) {
-    fprintf(stderr, "< ");
-    dump_hex(data, *recv_len);
-    fprintf(stderr, "\n");
+  if ((state->verbosity & YKYH_VERB_INFO) != 0) {
+    fprintf(state->debug_file, "< ");
+    dump_hex(state->debug_file, data, *recv_len);
+    fprintf(state->debug_file, "\n");
   }
   if (*recv_len >= 2) {
     *sw = (data[*recv_len - 2] << 8) | data[*recv_len - 1];
@@ -278,9 +294,7 @@ ykyh_rc ykyh_get_version(ykyh_state *state, char *version, size_t len) {
   } else if (sw == SW_SUCCESS) {
     int result = snprintf(version, len, "%d.%d.%d", data[0], data[1], data[2]);
     if (result < 0) {
-      if (state->verbose) {
-        fprintf(stderr, "Version buffer too small\n");
-      }
+      DBG_ERR("Version buffer too small");
       return YKYHR_GENERIC_ERROR;
     }
     return YKYHR_SUCCESS;
@@ -394,9 +408,7 @@ ykyh_rc ykyh_delete(ykyh_state *state, char *name) {
   if (rc != YKYHR_SUCCESS) {
     return rc;
   } else if (sw != SW_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "Unable to delete key: %04x\n", sw);
-    }
+    DBG_ERR("Unable to delete key: %04x", sw);
     return YKYHR_GENERIC_ERROR;
   }
 
@@ -458,9 +470,7 @@ ykyh_rc ykyh_calculate(ykyh_state *state, const char *name, uint8_t *context,
   if (rc != YKYHR_SUCCESS) {
     return rc;
   } else if (sw != SW_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "Unable to derive keys: %04x\n", sw);
-    }
+    DBG_ERR("Unable to derive keys: %04x", sw);
     if ((sw & 0xfff0) == SW_ERR_AUTHENTICATION_FAILED) {
       if (retries != NULL) {
         *retries = sw & ~SW_ERR_AUTHENTICATION_FAILED;
@@ -502,9 +512,7 @@ ykyh_rc ykyh_reset(ykyh_state *state) {
 
   res = send_data(state, &apdu, data, &recv_len, &sw);
   if (sw != SW_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "Unable to reset: %s\n", ykyh_strerror(res));
-    }
+    DBG_ERR("Unable to reset: %s", ykyh_strerror(res));
   }
 
   return res;
@@ -528,9 +536,7 @@ ykyh_rc ykyh_list_keys(ykyh_state *state, ykyh_list_entry *list,
 
   res = send_data(state, &apdu, data, &recv_len, &sw);
   if (res != YKYHR_SUCCESS || sw != SW_SUCCESS) {
-    if (state->verbose) {
-      fprintf(stderr, "Unable to list keys: %s\n", ykyh_strerror(res));
-    }
+    DBG_ERR("Unable to list keys: %s", ykyh_strerror(res));
     return res;
   }
 
