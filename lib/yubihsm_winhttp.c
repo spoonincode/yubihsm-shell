@@ -280,17 +280,25 @@ static yh_rc backend_connect(yh_connector *connector, int timeout) {
   return res;
 }
 
-static yh_rc backend_send_msg(yh_backend *connection, Msg *msg, Msg *response) {
+static yh_rc backend_send_msg(yh_backend *connection, Msg *msg, Msg *response,
+                              const char *identifier) {
   struct urlComponents components = {0};
   bool complete = false;
   yh_rc yrc = YHR_CONNECTOR_ERROR;
   uint16_t raw_len = msg->st.len + 3;
   DWORD dwStatusCode = 0;
   DWORD dwSize = sizeof(dwStatusCode);
+  wchar_t hsm_identifier[129];
+  wchar_t *headers = WINHTTP_NO_ADDITIONAL_HEADERS;
 
   DBG_INFO("sending message to %s", connection->connector->api_url);
   if (parseUrl(connection->connector->api_url, &components) == false) {
     return yrc;
+  }
+
+  if (identifier != NULL && strlen(identifier) > 0 && strlen(identifier) < 32) {
+    swprintf(hsm_identifier, 128, L"YubiHSM-Session: %s", identifier);
+    headers = hsm_identifier;
   }
 
   // swap the length in the message
@@ -308,8 +316,8 @@ static yh_rc backend_send_msg(yh_backend *connection, Msg *msg, Msg *response) {
   WinHttpSetTimeouts(connection->context->req, 30 * 1000, 30 * 1000, 250 * 1000,
                      250 * 1000);
 
-  WinHttpSendRequest(connection->context->req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                     msg->raw, raw_len, raw_len, 0);
+  WinHttpSendRequest(connection->context->req, headers, -1, msg->raw, raw_len,
+                     raw_len, 0);
 
   while (!complete) {
     enum stage new_stage = 0;
