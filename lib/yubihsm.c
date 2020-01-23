@@ -800,7 +800,9 @@ yh_rc yh_begin_create_session_ext(yh_connector *connector, uint16_t authkey_id,
   memcpy(new_session->context, host_challenge, SCP_HOST_CHAL_LEN);
 
   if (!rand_generate(identifier, sizeof(identifier))) {
-    return YHR_GENERIC_ERROR;
+    DBG_ERR("Failed getting randomness");
+    yrc = YHR_GENERIC_ERROR;
+    goto bcse_failure;
   }
   sprintf(new_session->s.identifier, "%02x%02x%02x%02x%02x%02x%02x%02x",
           identifier[0], identifier[1], identifier[2], identifier[3],
