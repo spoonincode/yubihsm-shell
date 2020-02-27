@@ -746,6 +746,7 @@ yh_rc yh_get_verbosity(uint8_t *verbosity);
  * @return void
  **/
 void yh_set_debug_output(yh_connector *connector, FILE *output);
+void yh_set_debug_output_fname(yh_connector *connector, const char *path);
 
 /**
  * Global library initialization

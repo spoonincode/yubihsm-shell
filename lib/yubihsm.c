@@ -3874,6 +3874,14 @@ void yh_set_debug_output(yh_connector *connector, FILE *output) {
   }
 }
 
+void yh_set_debug_output_fname(yh_connector *connector, const char *path) {
+  FILE *out = NULL;
+  if (fopen_s(&out, path, "a+") == 0) {
+    yh_set_debug_output(connector, out);
+  }
+}
+
+
 yh_rc yh_init(void) {
   if (_yh_output == NULL) {
     _yh_output = stderr;
